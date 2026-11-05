@@ -15,6 +15,9 @@ import {
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import dotenv from 'dotenv';
+import http from 'node:http';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { withArticleLinks } from './services/articleLinks.js';
 
 // 加载环境变量
 dotenv.config();
@@ -28,6 +31,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // 创建MCP服务器实例
+export function createServer() {
 const server = new Server(
   {
     name: process.env.MCP_SERVER_NAME || 'jue-knowledge-base',
@@ -74,7 +78,7 @@ const TOOLS = [
   },
   {
     name: 'get_top_articles_by_views',
-    description: '获取阅读量最高的文章列表，可按标签筛选，可指定时间范围',
+    description: '在公开 API 返回的文章样本中按阅读量排序，可按标签和时间筛选',
     inputSchema: {
       type: 'object',
       properties: {
@@ -198,7 +202,7 @@ const TOOLS = [
   },
   {
     name: 'get_content_summary',
-    description: '获取指定时间段内的内容统计摘要',
+    description: '获取公开 API 返回样本在指定时间段内的内容统计摘要',
     inputSchema: {
       type: 'object',
       properties: {
@@ -222,7 +226,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 // 注册工具调用处理器
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+  const { name, arguments: args = {} } = request.params;
+  for (const key of ['page', 'limit']) {
+    if (args[key] !== undefined && (!Number.isInteger(args[key]) || args[key] < 1 || args[key] > (key === 'limit' ? 50 : 1000))) {
+      return { isError: true, content: [{ type: 'text', text: '分页参数超出范围' }] };
+    }
+  }
 
   try {
     switch (name) {
@@ -237,7 +246,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(withArticleLinks(result), null, 2),
             },
           ],
         };
@@ -253,7 +262,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(withArticleLinks(result), null, 2),
             },
           ],
         };
@@ -270,7 +279,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(withArticleLinks(result), null, 2),
             },
           ],
         };
@@ -282,7 +291,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(withArticleLinks(result), null, 2),
             },
           ],
         };
@@ -297,7 +306,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(withArticleLinks(result), null, 2),
             },
           ],
         };
@@ -309,7 +318,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(withArticleLinks(result), null, 2),
             },
           ],
         };
@@ -325,7 +334,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(withArticleLinks(result), null, 2),
             },
           ],
         };
@@ -339,7 +348,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify(withArticleLinks(result), null, 2),
             },
           ],
         };
@@ -355,7 +364,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           type: 'text',
           text: JSON.stringify({
             error: error.message,
-            stack: error.stack,
           }),
         },
       ],
@@ -364,12 +372,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
+return server;
+}
+
 // 启动服务器
 async function main() {
   try {
     console.error('🚀 Jue MCP Server starting...');
     console.error('📡 Using API endpoint: https://jue.leheavengame.com/api');
 
+    if (process.env.MCP_TRANSPORT === 'http') {
+      startHTTP();
+      return;
+    }
+    const server = createServer();
     // 创建传输层
     const transport = new StdioServerTransport();
     
@@ -389,4 +405,39 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
-main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();
+
+// 无状态 Streamable HTTP 为每个请求创建独立实例，保留命令行 stdio 兼容性。
+export function startHTTP() {
+  const token = process.env.MCP_AUTH_TOKEN;
+  if (!token) throw new Error('HTTP 模式必须配置 MCP_AUTH_TOKEN');
+  const host = process.env.MCP_HOST || '127.0.0.1';
+  const port = Number(process.env.MCP_PORT || 3101);
+  return http.createServer(async (req, res) => {
+    if (req.url !== '/mcp') { res.writeHead(404).end(); return; }
+    // 浏览器插件直连时，仅允许已配置的网站来源访问。
+    const origin = req.headers.origin;
+    const allowedOrigins = (process.env.MCP_ALLOWED_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean);
+    if (origin) {
+      if (!allowedOrigins.includes(origin)) { res.writeHead(403).end(); return; }
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, MCP-Protocol-Version, Mcp-Session-Id');
+      res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id, MCP-Protocol-Version');
+    }
+    if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
+    if (req.headers.authorization !== `Bearer ${token}`) { res.writeHead(401).end(); return; }
+    if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }).end(); return; }
+    const server = createServer();
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    res.on('close', () => { transport.close(); server.close(); });
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res);
+    } catch (error) {
+      console.error('MCP HTTP 请求失败', error.message);
+      if (!res.headersSent) res.writeHead(500).end();
+    }
+  }).listen(port, host, () => console.error(`MCP HTTP listening on ${host}:${port}/mcp`));
+}

@@ -77,7 +77,7 @@ export async function analyzeEngagement(articleId) {
   try {
     // 获取文章详情
     const articleData = await http.get('/article/getArticleDetail', {
-      _id: articleId,
+      id: articleId,
     });
 
     if (!articleData || !articleData.article) {

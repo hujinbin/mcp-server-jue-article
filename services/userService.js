@@ -6,8 +6,8 @@ import * as http from './httpClient.js';
 export async function getUserStats(userIdentifier) {
   try {
     // 通过用户详情接口获取用户信息
-    const userData = await http.get('/user/getUserInfo', {
-      userId: userIdentifier,
+    const userData = await http.get('/view/userInfo', {
+      id: userIdentifier,
     });
 
     if (!userData || !userData.user) {
@@ -24,7 +24,7 @@ export async function getUserStats(userIdentifier) {
 
       const user = usersData.users.find(u => 
         u._id === userIdentifier || 
-        u.nickname.toLowerCase().includes(userIdentifier.toLowerCase())
+        (u.nickname || '').toLowerCase().includes(userIdentifier.toLowerCase())
       );
 
       if (!user) {
@@ -36,7 +36,7 @@ export async function getUserStats(userIdentifier) {
       }
 
       // 获取用户文章列表
-      const articles = await http.get('/user/getArticleList', {
+      const articles = await http.get('/article/getArticleList', {
         userId: user._id,
       });
 
@@ -87,7 +87,7 @@ export async function getUserStats(userIdentifier) {
     const user = userData.user;
     
     // 获取用户文章列表
-    const articles = await http.get('/user/getArticleList', {
+    const articles = await http.get('/article/getArticleList', {
       userId: user._id,
     });
 

@@ -6,7 +6,7 @@ Jue MCP Server 是一个基于 Model Context Protocol (MCP) 的知识库服务�
 
 ### 环境要求
 
-- Node.js 18 及以上版本
+- Node.js 20 及以上版本
 - npm 10 及以上版本
 
 ### 安装依赖
@@ -387,3 +387,15 @@ MIT
 - [MCP 官方文档](https://modelcontextprotocol.io)
 - [MCP SDK](https://github.com/modelcontextprotocol/sdk)
 - [Claude Desktop](https://claude.ai/desktop)
+
+## 网站插件直连的 HTTP 模式
+
+复制 `.env.example` 为 `.env`，设置 MCP_AUTH_TOKEN 和 MCP_ALLOWED_ORIGINS，运行 npm start。使用 Node.js 20+。浏览器配置中的令牌对用户可见，应使用适合公开客户端的只读查询凭据。
+
+服务默认监听 127.0.0.1:3101/mcp，通过 HTTPS 域名反向代理暴露 /mcp。MCP_ALLOWED_ORIGINS 填写插件所在网站的来源，例如 https://jue.leheavengame.com，多个来源以逗号分隔。浏览器需要 HTTPS 地址，服务器本机地址只用于反向代理的上游。
+
+插件初始化时填写 mcpServers 配置数组，直接连接 MCP。AI 后端只接收普通聊天消息，文章站无需 MCP 转发接口。
+
+JUE_API_BASE_URL 指定文章查询 API，JUE_SITE_URL 指定博文跳转网站。命令行客户端可以继续使用 MCP_TRANSPORT=stdio。
+
+运行 node --test test/http.test.js 验证协议、文章链接、鉴权和跨域访问。

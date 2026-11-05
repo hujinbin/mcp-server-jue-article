@@ -18,7 +18,7 @@ export async function searchByAuthor(author, page = 1, limit = 20, sortBy = 'lat
 
     // 查找匹配的用户
     const user = userData.users.find(u => 
-      u.nickname.toLowerCase().includes(author.toLowerCase()) || 
+      (u.nickname || '').toLowerCase().includes(author.toLowerCase()) ||
       u._id === author
     );
 
@@ -31,7 +31,7 @@ export async function searchByAuthor(author, page = 1, limit = 20, sortBy = 'lat
     }
 
     // 获取该用户的文章列表
-    const articleData = await http.get('/user/getArticleList', {
+    const articleData = await http.get('/article/getArticleList', {
       userId: user._id,
       page,
     });
@@ -182,9 +182,15 @@ export async function getTopByViews(limit = 10, tagId = null, timeRange = 'all')
 export async function searchByKeyword(keyword, searchIn = 'both', page = 1, limit = 20) {
   try {
     // 使用搜索接口
-    const searchData = await http.get('/view/search', {
-      search: keyword,
-    });
+    const offset = (page - 1) * limit;
+    const firstPage = Math.floor(offset / 20) + 1;
+    const lastPage = Math.floor((offset + limit - 1) / 20) + 1;
+    const found = [];
+    for (let apiPage = firstPage; apiPage <= lastPage; apiPage++) {
+      const result = await http.get('/view/search', { keyword, page: apiPage });
+      found.push(...(result?.article || []));
+    }
+    const searchData = { article: found.slice(offset % 20, offset % 20 + limit) };
 
     if (!searchData || !searchData.article) {
       return {
@@ -227,8 +233,7 @@ export async function searchByKeyword(keyword, searchIn = 'both', page = 1, limi
     });
 
     const total = articles.length;
-    const skip = (page - 1) * limit;
-    const paginatedArticles = articles.slice(skip, skip + limit);
+    const paginatedArticles = articles.slice(0, limit);
 
     return {
       success: true,
@@ -263,7 +268,7 @@ export async function getRecommendations(articleId, tagId, limit = 5) {
     // 如果提供了文章ID，先获取文章详情获得标签
     if (articleId) {
       const articleDetail = await http.get('/article/getArticleDetail', {
-        _id: articleId,
+        id: articleId,
       });
       
       if (articleDetail && articleDetail.article) {

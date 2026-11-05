@@ -3,16 +3,17 @@
  * 用于调用 jue 网站的 API 接口
  */
 
-const BASE_URL = 'https://jue.leheavengame.com/api';
 
 /**
  * 发送 HTTP 请求
  */
 async function request(method, path, data = null) {
+  const BASE_URL = (process.env.JUE_API_BASE_URL || 'https://jue.leheavengame.com/api').replace(/\/$/, '');
   const url = `${BASE_URL}${path}`;
   
   const options = {
     method,
+    signal: AbortSignal.timeout(15000),
     headers: {
       'Content-Type': 'application/json',
       'User-Agent': 'MCP-Server/1.0',
@@ -52,6 +53,9 @@ async function handleResponse(response) {
     throw new Error(result.message || 'API request failed');
   }
   
+  // 兼容文章站搜索接口的顶层字段和常规 data 包装。
+  if (result.articleList) return { ...result, article: result.articleList };
+  if (result.userList) return { users: result.userList };
   return result.data;
 }
 
