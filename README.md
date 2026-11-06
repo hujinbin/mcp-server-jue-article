@@ -398,4 +398,86 @@ MIT
 
 JUE_API_BASE_URL 指定文章查询 API，JUE_SITE_URL 指定博文跳转网站。命令行客户端可以继续使用 MCP_TRANSPORT=stdio。
 
-运行 node --test test/http.test.js 验证协议、文章链接、鉴权和跨域访问。
+运行 `npm test` 验证本地 HTTP、Vercel 入口、命令行 stdio、文章链接、鉴权和跨域访问。
+
+## 部署到 Vercel 并绑定域名
+
+本仓库已提供 Vercel Node.js 函数入口。Vercel 通过 `api/mcp.js` 处理 MCP 请求，复用本地 HTTP 的鉴权、来源限制和工具实现，每个请求独立创建 MCP 实例，不依赖常驻进程、端口监听或内存会话。`vercel.json` 将 `/mcp`、`/mcp/` 映射到函数，并将单次函数执行上限设为 60 秒。
+
+### 1. 导入项目
+
+1. 将本次代码更新到你的 Git 仓库，然后在 Vercel 新建项目并导入 `mcp-server-jue-article` 仓库。
+2. Root Directory 选择此仓库根目录，Framework Preset 选择 `Other`，Build Command 保持为空。Output Directory 已由 `vercel.json` 固定为 `public`，其中仅提供 `robots.txt`，服务代码通过函数入口执行；保留 Vercel 的依赖安装即可。
+3. Vercel 使用平台当前默认的 Node.js LTS 版本；本地运行支持 Node.js 20 及以上。
+
+### 2. 配置环境变量
+
+在 Vercel 项目 `Settings → Environment Variables` 添加以下配置，并勾选要使用的 Production / Preview 环境。不要上传本地 `.env` 文件。
+
+| 变量 | 示例或填写方式 |
+| --- | --- |
+| `MCP_AUTH_TOKEN` | 自行生成的长随机只读查询令牌，插件配置同一值 |
+| `MCP_ALLOWED_ORIGINS` | `https://jue.leheavengame.com,https://www.leheavengame.com`，允许两个博客域名 |
+| `JUE_API_BASE_URL` | `https://jue.leheavengame.com/api` |
+| `JUE_SITE_URL` | `https://jue.leheavengame.com` |
+| `MCP_SERVER_NAME` | 可选，默认 `jue-knowledge-base` |
+| `MCP_SERVER_VERSION` | 可选，默认 `1.0.0` |
+
+`MCP_ALLOWED_ORIGINS` 填插件实际运行的博客网站来源，如 `https://jue.leheavengame.com`，包含 `https://` 和可选端口，不带路径或末尾斜杠。需要本地调试时可以额外添加实际开发来源。浏览器中的令牌对访问者可见，因此这里只开放只读文章查询能力。
+
+`MCP_TRANSPORT`、`MCP_HOST`、`MCP_PORT` 专用于本地或自有服务器上的 HTTP / stdio 进程；Vercel 由函数平台管理请求。环境变量修改后，重新部署使新配置生效。
+
+### 3. 绑定 `mcp.leheavengame.com`
+
+部署成功后，在 Vercel 项目 `Settings → Domains` 添加 `mcp.leheavengame.com`，按页面给出的目标值为 DNS 中的 `mcp` 子域名配置记录。若已有旧服务器的同名记录，更新或移除冲突项；以该项目当前显示的 DNS 要求为准。等待域名验证和 HTTPS 证书就绪后，插件 MCP 地址填写：
+
+```text
+https://mcp.leheavengame.com/mcp
+```
+
+Production 域名需要允许插件正常访问，避免 Vercel 的登录保护或密码保护将 MCP 请求重定向到验证页。MCP 令牌鉴权和来源限制仍由本服务执行。只有在部署记录中出现本次函数入口后，域名才会运行新的 MCP 服务。
+
+### 4. 检查部署
+
+浏览器访问 `https://mcp.leheavengame.com/` 或 `/health`，配置完成时应看到：
+
+```json
+{"status":"ok","name":"jue-knowledge-base","transport":"streamable-http","endpoint":"/mcp"}
+```
+
+此检查确认函数启动和令牌已配置，不会调用文章 API，也不会返回令牌。未配置令牌时返回 HTTP 503 和 `status: "unconfigured"`。浏览器直接打开 `/mcp` 得到 401 是正常的；携带正确令牌的 GET 请求返回 405，因为协议入口使用 POST。
+
+协议检查可以将以下内容保存为 `mcp-initialize.json`：
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"deploy-check","version":"1"}}}
+```
+
+然后使用你的令牌执行：
+
+```bash
+curl https://mcp.leheavengame.com/mcp \
+  -H "Authorization: Bearer YOUR_READ_ONLY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  --data-binary @mcp-initialize.json
+```
+
+响应应包含 `result.protocolVersion` 和 `result.serverInfo`。同一地址继续发送 `tools/list` 可发现文章工具；服务无状态，不需要保存 `Mcp-Session-Id`。再从允许的网站测试插件检索文章和打开博文链接，即可验证完整链路。
+
+### 5. 更新博客插件
+
+博客 `jue` 已升级到 `ai-agent-plugin@0.0.2`，通过服务端运行时配置把 MCP 地址、只读查询令牌和联网选项传给插件。在博客服务器 `.env` 中配置：
+
+```env
+AI_API_BASE_URL=https://monitor.leheavengame.com/api
+JUE_AI_SEARCH=true
+JUE_MCP_URL=https://mcp.leheavengame.com/mcp
+JUE_MCP_TOKEN=replace-with-the-same-mcp-auth-token
+```
+
+`JUE_MCP_TOKEN` 与 Vercel 的 `MCP_AUTH_TOKEN` 使用同一值。本次已在两个本地项目 `.env` 中配置一致的令牌，上线时将这些对应配置同步到博客服务器和 Vercel。更新博客依赖、前端构建产物及服务端代码后，重启博客 Node 服务使 `.env` 生效。修改查询令牌时，重启服务即可更新页面运行时配置。
+
+插件先连接 MCP 查询文章，再把参考资料交给 AI 回答，参考来源可以新标签页打开。`JUE_AI_SEARCH=false` 可关闭公网搜索，同时继续使用 MCP 文章查询。
+
+Vercel 配置参考：[Node.js 函数与请求正文](https://vercel.com/docs/functions/runtimes/node-js)、[项目路由与函数配置](https://vercel.com/docs/project-configuration/vercel-json)、[绑定域名](https://vercel.com/docs/domains/working-with-domains/add-a-domain)。

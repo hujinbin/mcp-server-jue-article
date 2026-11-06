@@ -399,45 +399,89 @@ async function main() {
   }
 }
 
-// 优雅关闭
-process.on('SIGINT', async () => {
-  console.error('\n⏹️  Shutting down...');
-  process.exit(0);
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  // 仅命令行进程处理退出信号，Vercel 导入入口时不启动监听或注册进程处理器。
+  process.on('SIGINT', () => {
+    console.error('\n⏹️  Shutting down...');
+    process.exit(0);
+  });
+  main();
+}
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();
-
-// 无状态 Streamable HTTP 为每个请求创建独立实例，保留命令行 stdio 兼容性。
-export function startHTTP() {
+// 本地 HTTP 与 Vercel 共用无状态处理器，每个请求独立创建 MCP 实例。
+export async function handleMCPRequest(req, res, readParsedBody) { // 供网站插件鉴权后发现和调用文章查询工具
   const token = process.env.MCP_AUTH_TOKEN;
-  if (!token) throw new Error('HTTP 模式必须配置 MCP_AUTH_TOKEN');
+  if (!token) {
+    res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({ error: 'MCP 服务尚未配置' }));
+    return;
+  }
+  // 浏览器插件直连时，仅允许已配置的网站来源访问。
+  const origin = req.headers.origin;
+  const allowedOrigins = (process.env.MCP_ALLOWED_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean);
+  if (origin) {
+    if (!allowedOrigins.includes(origin)) { res.writeHead(403).end(); return; }
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, MCP-Protocol-Version, Mcp-Session-Id');
+    res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id, MCP-Protocol-Version');
+  }
+  if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
+  if (req.headers.authorization !== `Bearer ${token}`) { res.writeHead(401).end(); return; }
+  if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }).end(); return; }
+  let parsedBody;
+  try {
+    // Vercel 的 req.body 为惰性解析属性，鉴权后读取，并让解析错误保留前面设置的跨域头。
+    parsedBody = readParsedBody?.();
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' }).end(JSON.stringify({
+      jsonrpc: '2.0', error: { code: -32700, message: 'Parse error: Invalid JSON' }, id: null,
+    }));
+    return;
+  }
+  const server = createServer();
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+  let closing;
+  const close = () => (closing ||= server.close());
+  res.once('close', () => { void close().catch(() => {}); });
+  try {
+    await server.connect(transport);
+    // Vercel 已解析 JSON 时必须传入正文，避免 SDK 再次读取已消耗的请求流。
+    await transport.handleRequest(req, res, parsedBody);
+  } catch (error) {
+    console.error('MCP HTTP 请求失败', error.message);
+    if (!res.headersSent) res.writeHead(500).end();
+  } finally {
+    await close().catch(() => {});
+  }
+}
+
+export function handleHealthRequest(req, res) { // 供部署检查服务状态，不返回令牌或上游配置
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { Allow: 'GET, HEAD' }).end();
+    return;
+  }
+  const configured = Boolean(process.env.MCP_AUTH_TOKEN);
+  res.writeHead(configured ? 200 : 503, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
+  res.end(req.method === 'HEAD' ? undefined : JSON.stringify({
+    status: configured ? 'ok' : 'unconfigured',
+    name: process.env.MCP_SERVER_NAME || 'jue-knowledge-base',
+    transport: 'streamable-http',
+    endpoint: '/mcp',
+  }));
+}
+
+export function startHTTP() {
+  if (!process.env.MCP_AUTH_TOKEN) throw new Error('HTTP 模式必须配置 MCP_AUTH_TOKEN');
   const host = process.env.MCP_HOST || '127.0.0.1';
   const port = Number(process.env.MCP_PORT || 3101);
-  return http.createServer(async (req, res) => {
-    if (req.url !== '/mcp') { res.writeHead(404).end(); return; }
-    // 浏览器插件直连时，仅允许已配置的网站来源访问。
-    const origin = req.headers.origin;
-    const allowedOrigins = (process.env.MCP_ALLOWED_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean);
-    if (origin) {
-      if (!allowedOrigins.includes(origin)) { res.writeHead(403).end(); return; }
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, MCP-Protocol-Version, Mcp-Session-Id');
-      res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id, MCP-Protocol-Version');
-    }
-    if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
-    if (req.headers.authorization !== `Bearer ${token}`) { res.writeHead(401).end(); return; }
-    if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }).end(); return; }
-    const server = createServer();
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    res.on('close', () => { transport.close(); server.close(); });
-    try {
-      await server.connect(transport);
-      await transport.handleRequest(req, res);
-    } catch (error) {
-      console.error('MCP HTTP 请求失败', error.message);
-      if (!res.headersSent) res.writeHead(500).end();
-    }
+  return http.createServer((req, res) => {
+    const pathname = (req.url || '/').split('?')[0];
+    if (pathname === '/mcp' || pathname === '/mcp/') return handleMCPRequest(req, res); // 网站插件通过此入口查询文章工具
+    if (['/', '/health', '/health/'].includes(pathname)) return handleHealthRequest(req, res); // 浏览器检查本地与线上部署是否就绪
+    res.writeHead(404).end();
   }).listen(port, host, () => console.error(`MCP HTTP listening on ${host}:${port}/mcp`));
 }

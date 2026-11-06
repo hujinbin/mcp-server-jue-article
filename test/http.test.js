@@ -44,6 +44,12 @@ test('HTTP MCP 初始化、发现、检索、链接与鉴权', async () => {
     assert.equal(preflight.headers.get('access-control-allow-origin'), 'https://plugin.example.com');
     const forbidden = await fetch(endpoint, { method: 'OPTIONS', headers: { Origin: 'https://untrusted.example.com' } });
     assert.equal(forbidden.status, 403);
+    const trailing = await fetch(`${endpoint}/`, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) });
+    assert.equal(trailing.status, 200);
+    assert.ok((await trailing.json()).result.tools.length);
+    const health = await fetch(new URL('/health', endpoint));
+    assert.equal(health.status, 200);
+    assert.equal((await health.json()).endpoint, '/mcp');
   } finally {
     await new Promise(resolve => server.close(resolve));
     await new Promise(resolve => site.close(resolve));
