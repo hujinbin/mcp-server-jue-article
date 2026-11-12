@@ -47,6 +47,35 @@ const server = new Server(
 // 定义所有可用的工具
 const TOOLS = [
   {
+    name: 'list_authors',
+    description: '查询惊觉社区有哪些作者，返回公开推荐作者或按昵称关键词检索的作者样本及主页链接。本工具当前仅处理第 1 页样本，每次最多返回 20 位作者，不提供作者总数。',
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page: {
+          type: 'integer',
+          enum: [1],
+          default: 1,
+          description: '本工具当前仅处理推荐或昵称搜索样本的第 1 页',
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 20,
+          default: 20,
+          description: '本次最多返回的作者数量，范围 1 到 20',
+        },
+        keyword: {
+          type: 'string',
+          maxLength: 100,
+          description: '可选作者昵称关键词，例如“惊觉”。留空获取推荐作者',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'search_articles_by_author',
     description: '根据作者昵称或用户ID查找该作者发表的所有文章，支持分页',
     inputSchema: {
@@ -235,6 +264,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     switch (name) {
+      case 'list_authors': { // 为客服回答社区有哪些作者，并提供公开作者主页。
+        const result = await userService.listAuthors(args.page ?? 1, args.limit ?? 20, args.keyword ?? '');
+        return {
+          isError: !result.success,
+          structuredContent: result,
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
       case 'search_articles_by_author': {
         const result = await articleService.searchByAuthor(
           args.author,

@@ -57,6 +57,7 @@ npm run dev
 
 ## 可用工具概览
 
+- list_authors：获取推荐作者或按昵称关键词查询作者样本，返回作者主页
 - search_articles_by_author：按作者昵称或用户 ID 分页检索文章
 - get_top_articles_by_views：按阅读量获取热门文章，可选标签和时间范围
 - search_articles_by_keyword：按关键词搜索文章标题或描述
@@ -93,6 +94,7 @@ npm run dev
 - **get_article_recommendations** - 智能文章推荐
 
 ### 👤 用户分析
+- **list_authors** - 查询社区公开作者及主页
 - **get_user_stats** - 获取用户详细统计信息
 
 ### 📊 数据分析
@@ -182,6 +184,16 @@ AI 会调用 `get_user_stats` 工具。
 AI 会调用 `get_content_summary` 工具。
 
 ## API 工具说明
+
+### list_authors
+
+回答“社区有哪些作者”或按昵称关键词查找作者。返回公开昵称、主页及接口提供的头像、简介、作品数，不返回私有用户字段。
+
+作者展示资料中的手机号会在服务端脱敏，例如 `13800138000` 展示为 `138****8000`。昵称、简介和用户统计资料中的作者展示文本同样处理，原始手机号字段不返回给 AI。
+
+- `keyword` (string，可选)：作者昵称关键词，留空获取推荐作者。
+- `limit` (integer)：返回数量，1 到 20，默认 20。
+- `page` (integer)：本工具当前仅处理第 1 页推荐或昵称搜索样本，填写 1，不返回作者总数。
 
 ### search_articles_by_author
 
@@ -417,7 +429,7 @@ JUE_API_BASE_URL 指定文章查询 API，JUE_SITE_URL 指定博文跳转网站�
 | 变量 | 示例或填写方式 |
 | --- | --- |
 | `MCP_AUTH_TOKEN` | 自行生成的长随机只读查询令牌，插件配置同一值 |
-| `MCP_ALLOWED_ORIGINS` | `https://jue.leheavengame.com,https://www.leheavengame.com`，允许两个博客域名 |
+| `MCP_ALLOWED_ORIGINS` | `https://leheavengame.com,https://www.leheavengame.com,https://jue.leheavengame.com`，允许博客实际使用的三个来源 |
 | `JUE_API_BASE_URL` | `https://jue.leheavengame.com/api` |
 | `JUE_SITE_URL` | `https://jue.leheavengame.com` |
 | `MCP_SERVER_NAME` | 可选，默认 `jue-knowledge-base` |

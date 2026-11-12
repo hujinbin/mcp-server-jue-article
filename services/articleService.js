@@ -1,4 +1,5 @@
 import * as http from './httpClient.js';
+import { maskAuthorPhoneText } from './authorPrivacy.js';
 
 /**
  * 根据作者查询文章
@@ -64,12 +65,15 @@ export async function searchByAuthor(author, page = 1, limit = 20, sortBy = 'lat
       data: {
         author: {
           id: user._id,
-          nickname: user.nickname,
+          nickname: maskAuthorPhoneText(user.nickname),
           headImg: user.headImg,
           articleNum: user.articleNum,
           totalLikes: user.like,
         },
-        articles: articles.slice(0, limit),
+        articles: articles.slice(0, limit).map(article => ({
+          ...article,
+          nickname: maskAuthorPhoneText(article.nickname),
+        })),
         pagination: {
           page,
           limit,
@@ -82,7 +86,7 @@ export async function searchByAuthor(author, page = 1, limit = 20, sortBy = 'lat
     console.error('searchByAuthor error:', error);
     return {
       success: false,
-      message: error.message,
+      message: maskAuthorPhoneText(error.message),
       data: [],
     };
   }
