@@ -53,6 +53,10 @@ async function handleResponse(response) {
     throw new Error(result.message || 'API request failed');
   }
   
+  // 作者详情与搜索接口使用顶层字段，不能丢失作者信息。
+  if (result.user && typeof result.user === 'object') {
+    return { ...result, ...(Array.isArray(result.articleList) ? { article: result.articleList } : {}) };
+  }
   // 兼容文章站搜索接口的顶层字段和常规 data 包装。
   if (result.articleList) return { ...result, article: result.articleList };
   if (result.userList) return { users: result.userList };

@@ -9,7 +9,7 @@ export function withArticleLinks(value) {
     result.url = `${base}/article/${encodeURIComponent(id)}`;
   }
   if (Array.isArray(value.articles) || value.statistics || value.summary) {
-    result.queryScope = '数据来自公开 API 返回的分页样本，统计与排序范围仅限已返回的数据';
+    result.queryScope = value.queryScope || '数据来自公开 API 返回的分页样本，统计与排序范围仅限已返回的数据';
   }
   return result;
 }

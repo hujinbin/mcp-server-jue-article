@@ -1,52 +1,31 @@
 import * as http from './httpClient.js';
 import { maskAuthorPhoneText } from './authorPrivacy.js';
+import { resolveAuthor } from './userService.js';
 
 /**
  * 根据作者查询文章
  */
 export async function searchByAuthor(author, page = 1, limit = 20, sortBy = 'latest') {
   try {
-    // 先通过用户列表接口获取用户信息
-    const userData = await http.get('/view/users', {});
-    
-    if (!userData || !userData.users) {
-      return {
-        success: false,
-        message: '获取用户列表失败',
-        data: [],
-      };
+    if (!Number.isInteger(page) || page < 1 || page > 1000 || !Number.isInteger(limit) || limit < 1 || limit > 50 || !['latest', 'popular', 'views'].includes(sortBy)) {
+      return { success: false, message: '作者文章查询的分页或排序参数无效', data: null };
     }
-
-    // 查找匹配的用户
-    const user = userData.users.find(u => 
-      (u.nickname || '').toLowerCase().includes(author.toLowerCase()) ||
-      u._id === author
-    );
-
-    if (!user) {
-      return {
-        success: false,
-        message: '未找到该作者',
-        data: [],
-      };
+    const resolved = await resolveAuthor(author);
+    if (!resolved.success) return resolved;
+    const { user } = resolved.data;
+    const offset = (page - 1) * limit;
+    const firstPage = Math.floor(offset / 20) + 1;
+    const lastPage = Math.floor((offset + limit - 1) / 20) + 1;
+    const found = [];
+    // 上游每页固定 20 篇，映射工具分页，避免小页大小时跳过中间文章。
+    for (let apiPage = firstPage; apiPage <= lastPage; apiPage++) {
+      const rows = await http.get('/article/getArticleList', { userId: user._id, page: apiPage, sort: sortBy === 'views' ? 'hot' : 'latest' });
+      if (!Array.isArray(rows)) return { success: false, message: '公开接口未返回有效的作者文章列表', data: null };
+      found.push(...rows);
+      if (rows.length < 20) break;
     }
-
-    // 获取该用户的文章列表
-    const articleData = await http.get('/article/getArticleList', {
-      userId: user._id,
-      page,
-    });
-
-    if (!articleData) {
-      return {
-        success: false,
-        message: '获取文章列表失败',
-        data: [],
-      };
-    }
-
-    // 根据排序方式对文章进行排序
-    let articles = articleData || [];
+    const articles = found.slice(offset % 20, offset % 20 + limit);
+    // 上游支持最新与阅读排序，点赞排序仅作用于当前返回的分页样本。
     switch (sortBy) {
       case 'popular':
         articles.sort((a, b) => (b.likeNum || 0) - (a.likeNum || 0));
@@ -75,11 +54,11 @@ export async function searchByAuthor(author, page = 1, limit = 20, sortBy = 'lat
           nickname: maskAuthorPhoneText(article.nickname),
         })),
         pagination: {
-          page,
-          limit,
-          total: articles.length,
-          pages: Math.ceil(articles.length / limit),
+          page, limit, returnedCount: articles.length,
+          total: Number.isInteger(user.articleNum) && user.articleNum >= 0 ? user.articleNum : null,
+          pages: Number.isInteger(user.articleNum) && user.articleNum >= 0 ? Math.ceil(user.articleNum / limit) : null,
         },
+        queryScope: '文章总数来自公开作者资料记录，文章列表为当前分页样本；点赞排序仅限当前分页样本',
       },
     };
   } catch (error) {

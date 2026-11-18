@@ -36,7 +36,7 @@ test('作者列表、作者文章和用户统计的实际 MCP 响应不暴露作
         result = { code: 200, userList: [user, normal] };
         break;
       case '/api/view/userInfo':
-        result = { code: 200, data: { user: url.searchParams.get('id') === 'direct-author' ? user : null } };
+        result = { code: 200, user: url.searchParams.get('id') === user._id ? user : {}, articleList: articles };
         break;
       case '/api/article/getArticleList':
         result = { code: 200, data: articles };
@@ -99,14 +99,15 @@ test('作者列表、作者文章和用户统计的实际 MCP 响应不暴露作
     assert.equal(byAuthor.data.articles[0].description, '文章摘要');
     assert.equal(byAuthor.data.articles[0].url, `https://blog.example.com/article/${articles[0]._id}`);
 
-    for (const identifier of ['direct-author', user._id]) {
+    for (const identifier of [user.nickname, user._id]) {
       const stats = await call('get_user_stats', { userId: identifier });
       assert.equal(stats.data.user.nickname, '138****8000');
       assert.equal(stats.data.user.introduce, '联系 139****8000，备用 137****8000');
       assert.equal(stats.data.user.job, '咨询 136****8000');
       assert.equal(stats.data.user.company, '135****8000');
       assert.equal(stats.data.user.id, user._id);
-      assert.equal(stats.data.statistics.articleCount, 1);
+      assert.equal(stats.data.statistics.articleCount, 16);
+      assert.equal(stats.data.statistics.sampledArticleCount, 1);
       assert.equal(stats.data.statistics.totalViews, 12);
     }
   } finally {

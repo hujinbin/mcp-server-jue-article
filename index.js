@@ -77,7 +77,7 @@ const TOOLS = [
   },
   {
     name: 'search_articles_by_author',
-    description: '根据作者昵称或用户ID查找该作者发表的所有文章，支持分页',
+    description: '根据站内作者昵称或用户 ID 查询公开文章，支持分页。询问某位作者有哪些文章时使用。文章总数来自公开作者资料，列表为当前分页样本；重名时返回候选作者。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -161,7 +161,7 @@ const TOOLS = [
   },
   {
     name: 'get_user_stats',
-    description: '获取指定用户的统计信息，包括文章数、总点赞数、粉丝数等',
+    description: '查询站内某位作者有几篇文章、粉丝数等统计。支持作者昵称或用户 ID，文章数使用公开作者资料记录，阅读和点赞数据仅统计最新返回的公开文章样本。重名时返回候选作者。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -281,6 +281,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           args.sortBy || 'latest'
         );
         return {
+          isError: !result.success,
+          structuredContent: withArticleLinks(result),
           content: [
             {
               type: 'text',
@@ -326,6 +328,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'get_user_stats': {
         const result = await userService.getUserStats(args.userId);
         return {
+          isError: !result.success,
+          structuredContent: withArticleLinks(result),
           content: [
             {
               type: 'text',

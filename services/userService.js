@@ -63,144 +63,74 @@ export async function listAuthors(page = 1, limit = 20, keyword = '') {
 }
 
 /**
- * 获取用户统计信息
+ * 用作者 ID 或昵称解析公开资料，重名时由调用方确认作者。
+ */
+export async function resolveAuthor(userIdentifier) {
+  if (typeof userIdentifier !== 'string' || !userIdentifier.trim() || userIdentifier.trim().length > 100) {
+    return { success: false, message: '请提供最多 100 个字符的作者昵称或用户 ID', data: null };
+  }
+  const identifier = userIdentifier.trim();
+  let userId = identifier;
+  if (!/^[a-f0-9]{24}$/i.test(identifier)) {
+    const found = await http.get('/view/search', { keyword: identifier });
+    const users = (found?.users || found?.userList || []).filter(user => user && user._id && typeof user.nickname === 'string');
+    const exact = users.filter(user => user.nickname.trim().toLowerCase() === identifier.toLowerCase());
+    const matching = exact.length ? exact : users.filter(user => user.nickname.toLowerCase().includes(identifier.toLowerCase()));
+    if (matching.length !== 1) {
+      return {
+        success: false,
+        message: matching.length ? '找到多位匹配作者，请使用作者主页中的用户 ID 确认' : '公开昵称搜索中未找到匹配作者',
+        data: { candidates: matching.map(user => ({ id: String(user._id), nickname: maskAuthorPhoneText(user.nickname) })) },
+      };
+    }
+    userId = String(matching[0]._id);
+  }
+  const profile = await http.get('/view/userInfo', { id: userId });
+  if (!profile?.user?._id || String(profile.user._id) !== userId) {
+    return { success: false, message: '公开接口未返回该作者的有效资料', data: null };
+  }
+  return { success: true, data: { user: profile.user, articles: profile.articleList || profile.article } };
+}
+
+/**
+ * 获取作者统计，区分作者资料中的文章数与分页样本的阅读点赞数据。
  */
 export async function getUserStats(userIdentifier) {
   try {
-    // 通过用户详情接口获取用户信息
-    const userData = await http.get('/view/userInfo', {
-      id: userIdentifier,
-    });
-
-    if (!userData || !userData.user) {
-      // 如果直接查询失败，尝试从用户列表中查找
-      const usersData = await http.get('/view/users', {});
-      
-      if (!usersData || !usersData.users) {
-        return {
-          success: false,
-          message: '未找到该用户',
-          data: null,
-        };
-      }
-
-      const user = usersData.users.find(u => 
-        u._id === userIdentifier || 
-        (u.nickname || '').toLowerCase().includes(userIdentifier.toLowerCase())
-      );
-
-      if (!user) {
-        return {
-          success: false,
-          message: '未找到该用户',
-          data: null,
-        };
-      }
-
-      // 获取用户文章列表
-      const articles = await http.get('/article/getArticleList', {
-        userId: user._id,
-      });
-
-      // 计算统计数据
-      const totalViews = articles ? articles.reduce((sum, article) => sum + (article.readNum || 0), 0) : 0;
-      const totalLikes = articles ? articles.reduce((sum, article) => sum + (article.likeNum || 0), 0) : 0;
-      const articleCount = articles ? articles.length : 0;
-      
-      const topArticle = articles && articles.length > 0
-        ? articles.reduce((prev, current) => 
-            ((prev.readNum || 0) > (current.readNum || 0)) ? prev : current
-          )
-        : null;
-
-      const avgViews = articleCount > 0 ? Math.round(totalViews / articleCount) : 0;
-
-      return {
-        success: true,
-        data: {
-          user: {
-            id: user._id,
-            nickname: maskAuthorPhoneText(user.nickname),
-            headImg: user.headImg,
-            job: maskAuthorPhoneText(user.job || ''),
-            company: maskAuthorPhoneText(user.company || ''),
-            introduce: maskAuthorPhoneText(user.introduce || ''),
-            registTime: user.meta?.registTime,
-          },
-          statistics: {
-            articleCount,
-            totalViews,
-            totalLikes,
-            avgViews,
-            fans: user.fans || 0,
-            following: user.focu || 0,
-            followingTags: user.tag || 0,
-          },
-          topArticle: topArticle ? {
-            id: topArticle._id,
-            title: topArticle.title,
-            readNum: topArticle.readNum || 0,
-            likeNum: topArticle.likeNum || 0,
-          } : null,
-        },
-      };
-    }
-
-    const user = userData.user;
-    
-    // 获取用户文章列表
-    const articles = await http.get('/article/getArticleList', {
-      userId: user._id,
-    });
-
-    // 计算统计数据
-    const totalViews = articles ? articles.reduce((sum, article) => sum + (article.readNum || 0), 0) : 0;
-    const totalLikes = articles ? articles.reduce((sum, article) => sum + (article.likeNum || 0), 0) : 0;
-    const articleCount = articles ? articles.length : 0;
-    
-    const topArticle = articles && articles.length > 0
-      ? articles.reduce((prev, current) => 
-          ((prev.readNum || 0) > (current.readNum || 0)) ? prev : current
-        )
-      : null;
-
-    const avgViews = articleCount > 0 ? Math.round(totalViews / articleCount) : 0;
-
+    const resolved = await resolveAuthor(userIdentifier);
+    if (!resolved.success) return resolved;
+    const { user } = resolved.data;
+    const articles = Array.isArray(resolved.data.articles) ? resolved.data.articles : await http.get('/article/getArticleList', { userId: user._id, page: 1 });
+    if (!Array.isArray(articles)) return { success: false, message: '公开接口未返回有效的作者文章列表', data: null };
+    const recordedCount = Number.isInteger(user.articleNum) && user.articleNum >= 0;
+    const articleCount = recordedCount ? user.articleNum : articles.length < 20 ? articles.length : null;
+    const totalViews = articles.reduce((sum, article) => sum + (Number(article.readNum) || 0), 0);
+    const totalLikes = articles.reduce((sum, article) => sum + (Number(article.likeNum) || 0), 0);
+    const topArticle = articles.reduce((best, article) => !best || (article.readNum || 0) > (best.readNum || 0) ? article : best, null);
+    const site = new URL(process.env.JUE_SITE_URL || 'https://jue.leheavengame.com');
+    if (!['http:', 'https:'].includes(site.protocol) || site.username || site.password) throw new Error('作者主页站点地址配置无效');
     return {
       success: true,
       data: {
         user: {
-          id: user._id,
-          nickname: maskAuthorPhoneText(user.nickname),
-          headImg: user.headImg,
-          job: maskAuthorPhoneText(user.job || ''),
-          company: maskAuthorPhoneText(user.company || ''),
-          introduce: maskAuthorPhoneText(user.introduce || ''),
+          id: String(user._id), nickname: maskAuthorPhoneText(user.nickname),
+          url: new URL(`/user/${encodeURIComponent(user._id)}`, site.origin).href,
+          headImg: user.headImg, job: maskAuthorPhoneText(user.job || ''),
+          company: maskAuthorPhoneText(user.company || ''), introduce: maskAuthorPhoneText(user.introduce || ''),
           registTime: user.meta?.registTime,
         },
         statistics: {
           articleCount,
-          totalViews,
-          totalLikes,
-          avgViews,
-          fans: user.fans || 0,
-          following: user.focu || 0,
-          followingTags: user.tag || 0,
+          articleCountSource: recordedCount ? 'author_profile' : articleCount === null ? 'unavailable' : 'public_articles',
+          sampledArticleCount: articles.length, totalViews, totalLikes,
+          avgViews: articles.length ? Math.round(totalViews / articles.length) : 0,
+          fans: user.fans || 0, following: user.focu || 0, followingTags: user.tag || 0,
         },
-        topArticle: topArticle ? {
-          id: topArticle._id,
-          title: topArticle.title,
-          readNum: topArticle.readNum || 0,
-          likeNum: topArticle.likeNum || 0,
-        } : null,
+        topArticle: topArticle ? { id: topArticle._id, title: topArticle.title, readNum: topArticle.readNum || 0, likeNum: topArticle.likeNum || 0 } : null,
+        queryScope: `${recordedCount ? '文章数来自公开作者资料记录' : articleCount === null ? '当前资料未提供完整文章总数' : '文章数来自已完整返回的公开文章列表'}；阅读、点赞、平均阅读和最高阅读文章仅统计本次返回的 ${articles.length} 篇公开文章样本`,
       },
     };
   } catch (error) {
-    console.error('getUserStats error:', error);
-    return {
-      success: false,
-      message: maskAuthorPhoneText(error.message),
-      data: null,
-    };
+    return { success: false, message: maskAuthorPhoneText(error.message), data: null };
   }
 }
